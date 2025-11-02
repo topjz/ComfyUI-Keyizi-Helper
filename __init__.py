@@ -1,4 +1,4 @@
-from uploadToQiniu import UploadToQiniu
+from nodes.uploadToQiniu import UploadToQiniu
 
 # 节点注册列表（ComfyUI会自动扫描并加载）
 NODE_CLASS_MAPPINGS = {

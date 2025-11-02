@@ -28,7 +28,7 @@ class UploadToQiniu(Node):
         }
 
     # 输出类型定义
-    RETURN_TYPES = ()  # 输出张量
+    RETURN_TYPES = ("STRING")  # 输出张量
     RETURN_NAMES = ("fileName",)  # 输出名称（UI中显示）
 
     def process_audio(self, audio, subtitle, seed, filename_prefix=""):
