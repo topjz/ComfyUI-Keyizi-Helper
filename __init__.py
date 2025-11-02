@@ -10,5 +10,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "UploadToQiniu": "上传至七牛云"
 }
 
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
 # 版本信息（可选）
 __version__ = "0.1.0"
