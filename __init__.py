@@ -1,13 +1,10 @@
-from nodes.uploadToQiniu import UploadToQiniu
+from .upload_to_oss import UploadToOSS
 
-# 节点注册列表（ComfyUI会自动扫描并加载）
 NODE_CLASS_MAPPINGS = {
-    "UploadToQiniu": UploadToQiniu
+    "UploadToOSS": UploadToOSS
 }
-
-# 节点显示名称（在UI中显示的名字）
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "UploadToQiniu": "上传至七牛云"
+    "UploadToOSS": "上传到OSS"
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
