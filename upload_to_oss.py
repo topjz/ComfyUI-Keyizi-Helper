@@ -2,7 +2,9 @@ import torch
 import torchaudio
 import os
 import re
+import uuid
 from comfy_api.latest import ComfyExtension, io
+from qiniu import Auth, put_data
 
 class UploadToOSS:
     # 节点类别（UI左侧菜单分类）
@@ -19,10 +21,10 @@ class UploadToOSS:
                 "subtitle": ("STRING", {"default": ""}),  # 接收TTS的字幕
                 "seed": ("INT", {"default": 0}),  # 接收TTS的seed
                 "oss": (["Qiniu", "Aliyun", "Tencent", "Baidu"],), # OSS供应商
-                "access_key": ("STRING", {"default": ""}),  # 七牛云AccessKey
-                "secret_key": ("STRING", {"default": ""}),  # 七牛云SecretKey
-                "bucket_name": ("STRING", {"default": ""}),  # 七牛云存储空间名称
-                "domain": ("STRING", {"default": ""}),  # 七牛云域名（如：xxx.clouddn.com）
+                "access_key": ("STRING", {"default": "jwPeIBNuakhyjYU5k6c9bS_NrYS2zaoD2eMQHKZx"}),  # 七牛云AccessKey
+                "secret_key": ("STRING", {"default": "sTZ-0jgu3MR3Xo5MYAY3osHf7FBGQIASiQocYje4"}),  # 七牛云SecretKey
+                "bucket_name": ("STRING", {"default": "byimg"}),  # 七牛云存储空间名称
+                "domain": ("STRING", {"default": "https://img.bytide.net"}),  # 七牛云域名（如：xxx.clouddn.com）
             },
             "optional": {
                 "filename_prefix": ("STRING", {"default": ""}),  # 可选前缀
@@ -51,7 +53,8 @@ class UploadToOSS:
         audio_tensor, sample_rate = self.parse_audio_data(audio)
 
         # 3. 生成目标文件名
-        filename = self.generate_filename(subtitle, filename_prefix, seed, audio_format)
+
+        filename = f"{uuid.uuid4().hex}.{audio_format}"
         print(f"生成目标文件名：{filename}")
 
         # 4. 音频张量转二进制流（支持wav/mp3）
@@ -59,19 +62,17 @@ class UploadToOSS:
         print(f"音频转换完成（{audio_format}），大小：{len(audio_bytes) / 1024:.2f}KB")
 
         UPLOADER_HANDLES = {
-            "Qiniu": upload_qiniu,
-            "Aliyun": upload_aliyun,
-            "Tencent": upload_aliyun,
-            "Baidu": upload_baidu
+            "Qiniu": self.upload_qiniu,
+            "Aliyun": self.upload_aliyun,
+            "Tencent": self.upload_tencent,
+            "Baidu": self.upload_baidu
         }
 
         # # 5. 上传至七牛云
         try:
-            audio_url = UPLOADER_HANDLES.get(oss)(
-                audio_bytes, filename, access_key, secret_key, bucket_name, domain
-            )
+            audio_url = UPLOADER_HANDLES.get(oss)(audio_bytes, filename, access_key, secret_key, bucket_name, domain)
             print(f"上传成功，URL：{audio_url}")
-            return "11.wav", "https://www.domain.com/11.wav"
+            return filename, audio_url
         except Exception as e:
             raise RuntimeError(f"上传出错：{str(e)}")
 
@@ -117,6 +118,7 @@ class UploadToOSS:
     def generate_filename(self, subtitle, prefix, seed, audio_format):
         """生成安全的七牛云存储文件名"""
         # 处理字幕（保留中英文和常见符号，替换特殊字符）
+        print(subtitle)
         if subtitle:
             safe_subtitle = re.sub(r'[^\w\u4e00-\u9fa5,.!? ]', '_', subtitle)
             safe_subtitle = safe_subtitle.strip().replace(' ', '_')[:20]  # 限制长度
@@ -157,7 +159,47 @@ class UploadToOSS:
         return buffer.read()
 
     # 上传七牛云
-    def upload_to_qiniu(self, audio_bytes, filename, access_key, secret_key, bucket_name, domain):
+    def upload_qiniu(self, audio_bytes, filename, access_key, secret_key, bucket_name, domain):
+        """用二进制流直接上传七牛云（无需本地文件路径）"""
+        try:
+            print(f"access_key：{access_key}，secret_key：{secret_key}")  # 打印部分令牌，确认生成正常
+            # 初始化七牛云认证
+            q = Auth(access_key, secret_key)
+
+            # 生成上传令牌（有效期3600秒）
+            token = q.upload_token(bucket_name, filename, 3600)
+            print(f"七牛云上传令牌生成成功：{token[:30]}...")  # 打印部分令牌，确认生成正常
+
+            # 上传二进制数据
+            ret, info = put_data(token, filename, audio_bytes)
+            print(f"七牛云上传响应：ret={ret}，info={info}")  # 打印完整响应，方便排查
+
+            # 验证上传结果
+            if ret is None:
+                raise Exception(f"上传失败，七牛云未返回有效结果：{info}")
+            if info.status_code not in [200, 201]:
+                raise Exception(f"上传失败，HTTP状态码：{info.status_code}，详情：{info}")
+
+            # 生成可访问的URL
+            audio_url = f"{domain}/{ret['key']}"
+            print(f"七牛云上传成功，URL：{audio_url}")
+            return audio_url
+        except ValueError as ve:
+            # 配置格式错误，直接抛出
+            raise RuntimeError(f"七牛云配置错误：{str(ve)}")
+        except Exception as e:
+            # 其他错误（认证失败、权限不足等）
+            raise RuntimeError(
+                f"七牛云上传出错：{str(e)}\n"
+                f"排查建议：\n"
+                f"1. 确认AK/SK填写正确（从七牛云密钥管理复制）\n"
+                f"2. 确认bucket_name与控制台存储空间名称一致\n"
+                f"3. 确认存储空间未被删除或禁用\n"
+                f"4. 检查AK/SK是否有权限上传到该存储空间"
+            )
+
+    # 上传阿里云
+    def upload_aliyun(self, audio_bytes, filename, access_key, secret_key, bucket_name, domain):
         """用二进制流直接上传七牛云（无需本地文件路径）"""
         try:
             # from qiniu import Auth, put_data
@@ -172,7 +214,49 @@ class UploadToOSS:
             # # 验证上传结果
             # if ret is None or info.status_code != 200:
             #     raise Exception(f"上传响应异常：{info}")
-            return f"https://domain/ret"
+            return f"https://domain/aliyun"
             # return f"https://{domain}/{ret['key']}"
         except Exception as e:
-            print(f"七牛云上传出错：{str(e)}")
+            print(f"阿里云上传出错：{str(e)}")
+
+    # 上传腾讯云
+    def upload_tencent(self, audio_bytes, filename, access_key, secret_key, bucket_name, domain):
+        """用二进制流直接上传七牛云（无需本地文件路径）"""
+        try:
+            # from qiniu import Auth, put_data
+            # q = Auth(access_key, secret_key)
+            #
+            # # 生成上传令牌（有效期3600秒）
+            # token = q.upload_token(bucket_name, filename, 3600)
+            #
+            # # 上传二进制数据
+            # ret, info = put_data(token, filename, audio_bytes)
+            #
+            # # 验证上传结果
+            # if ret is None or info.status_code != 200:
+            #     raise Exception(f"上传响应异常：{info}")
+            return f"https://domain/tecent"
+            # return f"https://{domain}/{ret['key']}"
+        except Exception as e:
+            print(f"腾讯云上传出错：{str(e)}")
+
+    # 上传百度云
+    def upload_baidu(self, audio_bytes, filename, access_key, secret_key, bucket_name, domain):
+        """用二进制流直接上传七牛云（无需本地文件路径）"""
+        try:
+            # from qiniu import Auth, put_data
+            # q = Auth(access_key, secret_key)
+            #
+            # # 生成上传令牌（有效期3600秒）
+            # token = q.upload_token(bucket_name, filename, 3600)
+            #
+            # # 上传二进制数据
+            # ret, info = put_data(token, filename, audio_bytes)
+            #
+            # # 验证上传结果
+            # if ret is None or info.status_code != 200:
+            #     raise Exception(f"上传响应异常：{info}")
+            return f"https://domain/baidu"
+            # return f"https://{domain}/{ret['key']}"
+        except Exception as e:
+            print(f"百度云上传出错：{str(e)}")
